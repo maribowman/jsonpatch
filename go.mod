@@ -1,4 +1,4 @@
-module github.com/snorwin/jsonpatch
+module github.com/maribowman/jsonpatch
 
 go 1.15
 
