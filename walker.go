@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -39,15 +40,7 @@ func (w *walker) walk(modified, current reflect.Value, pointer JSONPointer) erro
 	case reflect.Interface:
 		return w.processInterface(modified, current, pointer)
 	case reflect.String:
-		if modified.String() != current.String() {
-			if modified.String() == "" {
-				w.remove(pointer, current.String())
-			} else if current.String() == "" {
-				w.add(pointer, modified.String())
-			} else {
-				w.replace(pointer, modified.String(), current.String())
-			}
-		}
+		return w.processString(modified, current, pointer)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if modified.Int() != current.Int() {
 			w.replace(pointer, modified.Int(), current.Int())
@@ -55,6 +48,14 @@ func (w *walker) walk(modified, current reflect.Value, pointer JSONPointer) erro
 	case reflect.Uint, reflect.Uintptr, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		if modified.Uint() != current.Uint() {
 			w.replace(pointer, modified.Uint(), current.Uint())
+		}
+	case reflect.Float32:
+		if modified.Float() != current.Float() {
+			w.replace(pointer, float32(modified.Float()), float32(current.Float()))
+		}
+	case reflect.Float64:
+		if modified.Float() != current.Float() {
+			w.replace(pointer, modified.Float(), current.Float())
 		}
 	case reflect.Bool:
 		if modified.Bool() != current.Bool() {
@@ -79,6 +80,21 @@ func (w *walker) processInterface(modified reflect.Value, current reflect.Value,
 	// extract the value form the interface and try to process it further
 	if err := w.walk(reflect.ValueOf(modified.Interface()), reflect.ValueOf(current.Interface()), pointer); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// processString processes reflect.String values
+func (w *walker) processString(modified reflect.Value, current reflect.Value, pointer JSONPointer) error {
+	if modified.String() != current.String() {
+		if modified.String() == "" {
+			w.remove(pointer, current.String())
+		} else if current.String() == "" {
+			w.add(pointer, modified.String())
+		} else {
+			w.replace(pointer, modified.String(), current.String())
+		}
 	}
 
 	return nil
@@ -252,6 +268,19 @@ func (w *walker) processStruct(modified, current reflect.Value, pointer JSONPoin
 		return nil
 	}
 
+	if modified.Type().PkgPath() == "time" && modified.Type().Name() == "Time" {
+		m, err := toTimeStrValue(modified)
+		if err != nil {
+			return err
+		}
+
+		c, err := toTimeStrValue(current)
+		if err != nil {
+			return err
+		}
+		return w.processString(m, c, pointer)
+	}
+
 	// process all struct fields, the order of the fields of the  modified and current JSON object is identical because their types match
 	for j := 0; j < modified.NumField(); j++ {
 		tag := strings.Split(modified.Type().Field(j).Tag.Get(jsonTag), ",")[0]
@@ -266,6 +295,14 @@ func (w *walker) processStruct(modified, current reflect.Value, pointer JSONPoin
 	}
 
 	return nil
+}
+
+func toTimeStrValue(v reflect.Value) (reflect.Value, error) {
+	t, err := v.Interface().(time.Time).MarshalText()
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return reflect.ValueOf(string(t)), nil
 }
 
 // extractIgnoreSliceOrderMatchValue extracts the value which is used to match the modified and current values to ignore the slice order
@@ -284,6 +321,10 @@ func extractIgnoreSliceOrderMatchValue(value reflect.Value, fieldName string) st
 		return strconv.FormatInt(value.Int(), 10)
 	case reflect.Uint, reflect.Uintptr, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return strconv.FormatUint(value.Uint(), 10)
+	case reflect.Float32:
+		return strconv.FormatFloat(value.Float(), 'f', -1, 32)
+	case reflect.Float64:
+		return strconv.FormatFloat(value.Float(), 'f', -1, 64)
 	case reflect.Bool:
 		return strconv.FormatBool(value.Bool())
 	}
